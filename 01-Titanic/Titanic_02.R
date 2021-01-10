@@ -4,7 +4,6 @@ library(gridExtra)
 library(caret)
 library(randomForest)
 library(xgboost)
-library(extraTrees)
 
 # load train data
 ## set the file path
@@ -153,11 +152,13 @@ dat <- auto_dummy(dat,colnames)
 
 
 ## create correlation coefficient matrices
-dat[,-c(1,4,5,7)] %>% cor(., method = "pearson") %>% 
+dat[,-which(names(dat) %in% c("Pclass", "SibSp", "Parch", "Embarked"))] %>% 
+  cor(., method = "pearson") %>% 
   pheatmap::pheatmap(., display_numbers = T)
 
 ### add survived and only use the train set data
-train <- cbind(Survived, dat[1:length(Survived),])[,-c(2,5,6,8,23)]
+train <- cbind(Survived, dat[1:length(Survived),])
+train <- train[,-which(names(train) %in% c("Pclass", "SibSp", "Parch", "Embarked", "Parch9"))]
 train %>% cor(., method = "pearson") %>% 
   pheatmap::pheatmap(., display_numbers = T)
 
@@ -166,9 +167,9 @@ train %>% cor(., method = "pearson") %>%
 
 
 # Feature Engineering
-train_x <- dat[,-c(4,5,7)][1:length(Survived),]
-train_y <- train[,1] %>% factor()
-test_x <- dat[,-c(4,5,7)][-(1:length(Survived)),]
+train_x <- dat[,-which(names(dat) %in% c("SibSp", "Parch", "Embarked"))][1:length(Survived),]
+train_y <- train[,"Survived"] %>% factor()
+test_x <- dat[,-which(names(dat) %in% c("SibSp", "Parch", "Embarked"))][-(1:length(Survived)),]
 
 ## find feature by randomForest
 model_rf <- randomForest(train_x, train_y)
@@ -177,68 +178,70 @@ model_rf$importance %>% as.data.frame() %>% arrange(desc(MeanDecreaseGini))
 
 
 
-# Model Selection
-## CV setting
-train_control <- trainControl(method="cv", number=5)
-
 ## Grid Search
 ### rf
 #### mtry
+set.seed(2021, sample.kind = "Rounding")
 grid <- expand.grid(mtry= 1:23)
 model_rf <- train(train_x, 
                   train_y,
                   method = "rf",
                   tuneGrid = grid,
                   trControl = train_control)
-model_rf$bestTune # best mtry is 5
+model_rf$bestTune # best mtry is 7
 
 
 #### ntree
+set.seed(2021, sample.kind = "Rounding")
 ntrees <- seq(100,1000,100)
 grid <- expand.grid(mtry= 5)
 res <- sapply(ntrees, function(ntree){
   model_rf <- train(train_x, 
-                  train_y,
-                  method = "rf",
-                  tuneGrid = grid,
-                  ntree = ntree,
-                  trControl = train_control)
+                    train_y,
+                    method = "rf",
+                    tuneGrid = grid,
+                    ntree = ntree,
+                    trControl = train_control)
   return(model_rf$results$Accuracy)
 })
-plot(ntrees, res) # best ntree is 900
+plot(ntrees, res) # best ntree is 500
+
 
 #### final rf model
-grid <- expand.grid(mtry= 5)
+set.seed(9527, sample.kind = "Rounding")
+grid <- expand.grid(mtry= 7)
 model_rf <- train(train_x, 
                   train_y,
                   method = "rf",
                   tuneGrid = grid,
-                  ntree = 900,
+                  ntree = 500,
                   trControl = train_control)
 model_rf$results["Accuracy"]
-predict(model_rf, test_x) 
 
 
 
 ### rpart
 #### cp
+set.seed(2021, sample.kind = "Rounding")
 grid <- expand.grid(cp = seq(0,0.5, 0.005))
 model_rpart <- train(train_x, 
-                  train_y,
-                  method = "rpart",
-                  tuneGrid = grid,
-                  trControl = train_control)
-model_rpart$bestTune # the best cp is 0.005
+                     train_y,
+                     method = "rpart",
+                     tuneGrid = grid,
+                     trControl = train_control)
+model_rpart$bestTune # the best cp is 0.01
+
 
 #### final model
-grid <- expand.grid(cp = 0.005)
+set.seed(9527, sample.kind = "Rounding")
+grid <- expand.grid(cp = 0.01)
 model_rpart <- train(train_x, 
                      train_y,
                      method = "rpart",
                      tuneGrid = grid,
                      trControl = train_control)
 model_rpart$results["Accuracy"]
-predict(model_rpart, test_x) 
+
 
 ### adaboost
 grid <- expand.grid(nIter = floor((1:10) * 25), method = c("Adaboost.M1", "Real adaboost"))
@@ -261,6 +264,8 @@ predict(model_ada, test_x)
 
 
 ### xgbTree
+### xgbTree
+set.seed(2021, sample.kind = "Rounding")
 grid <- expand.grid(nrounds = seq(10,200,20),
                     max_depth = 1:5,
                     eta = 0.4,
@@ -273,38 +278,40 @@ model_xgb <- train(train_x,
                    method = "xgbTree",
                    tuneGrid = grid,
                    trControl = train_control)
-model_xgb$bestTune # best nround = 30, max_depth = 5, gamma = 0, colsample_bytree = 0.55, min = 1, subsample = 0.7
+model_xgb$bestTune # best nround = 10, max_depth = 4, gamma = 0, colsample_bytree = 0.75, min = 1, subsample = 0.65
 
 
-grid <- expand.grid(nrounds = 30,
-                    max_depth = 5,
+set.seed(2021, sample.kind = "Rounding")
+grid <- expand.grid(nrounds = 10,
+                    max_depth = 4,
                     eta = seq(0.01,0.4,0.01),
                     gamma = 0,
-                    colsample_bytree = 0.55,
+                    colsample_bytree = 0.75,
                     min_child_weight = 1,
-                    subsample = 0.7)
+                    subsample = 0.65)
 model_xgb <- train(train_x, 
                    train_y,
                    method = "xgbTree",
                    tuneGrid = grid,
                    trControl = train_control)
-model_xgb$bestTune # the best eta is 0.13
+model_xgb$bestTune # the best eta is 0.08
+
 
 #### final model
-grid <- expand.grid(nrounds = 30,
-                    max_depth = 5,
-                    eta = 0.13,
+set.seed(9527, sample.kind = "Rounding")
+grid <- expand.grid(nrounds = 10,
+                    max_depth = 4,
+                    eta = 0.08,
                     gamma = 0,
-                    colsample_bytree = 0.55,
+                    colsample_bytree = 0.75,
                     min_child_weight = 1,
-                    subsample = 0.7)
+                    subsample = 0.65)
 model_xgb <- train(train_x, 
                    train_y,
                    method = "xgbTree",
                    tuneGrid = grid,
                    trControl = train_control)
 model_xgb$results["Accuracy"]
-predict(model_xgb, test_x) 
 
 
 
@@ -312,18 +319,20 @@ predict(model_xgb, test_x)
 # Ensemble
 ensemble <- function(train_x, train_y, test_x){
   ## Random Forest
-  grid <- expand.grid(mtry= 5)
+  set.seed(9527, sample.kind = "Rounding")
+  grid <- expand.grid(mtry= 7)
   model_rf <- train(train_x, 
                     train_y,
                     method = "rf",
                     tuneGrid = grid,
-                    ntree = 900,
+                    ntree = 500,
                     trControl = train_control)
   pred_rf <- predict(model_rf, test_x) == 1
-
+  
   
   ## rpart
-  grid <- expand.grid(cp = 0.005)
+  set.seed(9527, sample.kind = "Rounding")
+  grid <- expand.grid(cp = 0.01)
   model_rpart <- train(train_x, 
                        train_y,
                        method = "rpart",
@@ -332,13 +341,14 @@ ensemble <- function(train_x, train_y, test_x){
   pred_rpar <- predict(model_rpart, test_x) == 1
   
   ## xgboost
-  grid <- expand.grid(nrounds = 30,
-                      max_depth = 5,
-                      eta = 0.13,
+  set.seed(9527, sample.kind = "Rounding")
+  grid <- expand.grid(nrounds = 10,
+                      max_depth = 4,
+                      eta = 0.08,
                       gamma = 0,
-                      colsample_bytree = 0.55,
+                      colsample_bytree = 0.75,
                       min_child_weight = 1,
-                      subsample = 0.7)
+                      subsample = 0.65)
   model_xgb <- train(train_x, 
                      train_y,
                      method = "xgbTree",
@@ -355,4 +365,4 @@ ensemble <- function(train_x, train_y, test_x){
 
 res <- ensemble(train_x, train_y, test_x)
 res <- data.frame(PassengerId = dat_test$PassengerId, Survived = res)
-write.csv(res, "pred_10.csv", row.names = FALSE)
+write.csv(res, "pred_R.csv", row.names = FALSE)
